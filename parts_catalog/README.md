@@ -1,6 +1,6 @@
 # Parts Catalog Lookup (starter MVP)
 
-A small local-first API and browser UI for vehicle selection, part-number/product search, fitment records, and authorized product-image storage. It intentionally does **not** scrape third-party sites or ship an OEM catalog. Populate it only with data you own or are authorized to use; record data and image sources/licenses.
+A local-first API and browser UI for vehicle selection, part-number/product search, fitment records, and authorized product-image storage. It does **not** ship an OEM catalog or scrape third-party sites. Populate it only with data you own or are authorized to use; record data and image sources/licenses.
 
 ## Run locally
 
@@ -17,7 +17,33 @@ uvicorn parts_catalog.main:app --reload
 
 Open <http://127.0.0.1:8000>. Interactive API documentation is at <http://127.0.0.1:8000/docs>. The SQLite database and uploaded images are created in `parts_catalog/data/`. Set `CATALOG_DATA_DIR` to move them outside the repository. Do not commit catalog data, uploaded images, or production secrets.
 
-## Add authorized catalog records
+## Import real data from a local CSV
+
+The importer accepts normalized CSV files from an authorized export, supplier feed, or data you have permission to use. It reads local files only: it does not fetch URLs, crawl websites, or bypass access restrictions. A page appearing in Google search does not by itself grant permission to reuse its catalog data or images. Use a provider's documented export/feed and follow its terms. The importer does not connect to 7zap; only use a 7zap export if you have permission to obtain and reuse it.
+
+Required CSV headers are `part_number`, `title`, and `part_source`. Optional columns:
+
+```text
+brand,description,category,make,model,year_start,year_end,engine,engine_code,region,vehicle_source,fitment_notes,fitment_source,image_path,image_alt_text,image_source,image_license
+```
+
+Each row describes a part and optionally one vehicle fitment. Repeat a part row for its other vehicle applications. Leave all vehicle columns blank for a part without fitment data. Image paths are local paths relative to `--images-dir`; remote image URLs are not downloaded. If supplying an image, include its source and license/permission details. JPEG, PNG, and WebP files up to 5 MiB are accepted.
+
+Run a dry-run first (this is the default):
+
+```bash
+python -m parts_catalog.importer /path/to/authorized-catalog.csv --images-dir /path/to/authorized-images
+```
+
+Apply valid rows to the local database after reviewing the report:
+
+```bash
+python -m parts_catalog.importer /path/to/authorized-catalog.csv --images-dir /path/to/authorized-images --apply
+```
+
+The importer is idempotent for matching part/vehicle/fitment/image records, updates non-empty fields for an existing part number, processes database writes in batches, and reports invalid rows by CSV line number. Keep backups before importing updates. For large production imports, use PostgreSQL and test on a staging database first.
+
+## Add records through the API
 
 All write endpoints require `X-Admin-Token` matching `CATALOG_ADMIN_TOKEN`. Read/search endpoints are public by default; put authentication in front of them before deploying private catalog data.
 
@@ -41,15 +67,6 @@ curl -X POST http://127.0.0.1:8000/api/admin/fitments \\
   -d '{"part_id":1,"vehicle_id":1,"notes":"Verify production date and PR codes","source":"authorized-data-source"}'
 ```
 
-Upload an image only when you have permission to store and display it. JPEG, PNG, and WebP are accepted up to 5 MiB; image source and license metadata can be recorded:
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/admin/parts/1/images \\
-  -H 'X-Admin-Token: replace-with-a-long-random-secret' \\
-  -F 'file=@part-photo.jpg' -F 'alt_text=Front brake pad set' \\
-  -F 'source=Supplier name' -F 'license=Written permission, 2026-01-01'
-```
-
 ## Lookup API
 
 - `GET /api/vehicles?make=Volkswagen&model=Golf&year=2018` — select/filter vehicle applications.
@@ -58,8 +75,8 @@ curl -X POST http://127.0.0.1:8000/api/admin/parts/1/images \\
 - `GET /api/parts/{id}` — part, image URLs, and fitments.
 - `GET /media/{filename}` — serve stored images.
 
-Each vehicle entry represents a year range and optional engine/application details. Fitment data may need exact engine, market, production-date, or PR-code qualification; store those caveats in fitment notes and do not imply broader compatibility than the source supports.
+Each vehicle entry represents a year range and optional engine/application details. Fitment may depend on exact engine, market, production date, or PR codes; store caveats in fitment notes and do not claim broader compatibility than your source supports.
 
-## Connecting a future authorized feed
+## Production notes
 
-Keep the feed integration separate from lookup routes: map the provider's documented/exported format into the vehicle, part, fitment, and image records above; preserve provider IDs, source, license/permission, and sync timestamps in a future importer. Use the provider's published limits and terms. This starter is suitable for a small prototype, not yet a production 100,000-part deployment; add PostgreSQL, migrations, background batch imports, backups, observability, and access controls before scaling or exposing it publicly.
+This is a starter application, not a complete OEM catalog or production-hardened 100,000-part service. Before deploying publicly, add authentication for reads, PostgreSQL and migrations, backups, import job monitoring, tests, and object storage if needed. Connect a future provider through its documented, authorized feed/export and preserve provider IDs, source, license/permission, and sync timestamps.
